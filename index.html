@@ -158,6 +158,7 @@ let comboTimer = 0;
 let bgGradientAngle = 0;
 let ambientParticles = [];
 let initialized = false;
+let showTutorial = !localStorage.getItem('bb_tutorial_seen');
 
 // ---- Piece Definitions (all Block Blast shapes) ----
 const PIECE_SHAPES = [
@@ -512,6 +513,13 @@ function onPointerDown(e) {
   e.preventDefault();
   initAudio();
   
+  // Dismiss tutorial on click
+  if (showTutorial) {
+    showTutorial = false;
+    localStorage.setItem('bb_tutorial_seen', '1');
+    return;
+  }
+  
   // Sound toggle button check
   const pos = getEventPos(e);
   const btnSize = 36;
@@ -519,6 +527,15 @@ function onPointerDown(e) {
   const btnY = 30;
   if (pos.x >= btnX && pos.x <= btnX + btnSize && pos.y >= btnY && pos.y <= btnY + btnSize) {
     toggleSound();
+    return;
+  }
+  
+  // Help button check
+  const helpSize = 36;
+  const helpX = 14;
+  const helpY = 30;
+  if (pos.x >= helpX && pos.x <= helpX + helpSize && pos.y >= helpY && pos.y <= helpY + helpSize) {
+    showTutorial = true;
     return;
   }
   
@@ -1115,6 +1132,25 @@ function drawUI() {
   ctx.textBaseline = 'middle';
   ctx.fillText(soundEnabled ? '🔊' : '🔇', W - 32, btnY + btnSize / 2 + 1);
   
+  // Help button (top left)
+  const helpSize = 36;
+  const helpX = 14;
+  const helpY = 30;
+  ctx.fillStyle = 'rgba(15, 15, 40, 0.6)';
+  ctx.beginPath();
+  ctx.roundRect(helpX, helpY, helpSize, helpSize, 10);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(30, 144, 255, 0.3)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.roundRect(helpX, helpY, helpSize, helpSize, 10);
+  ctx.stroke();
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 18px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('?', helpX + helpSize / 2, helpY + helpSize / 2 + 1);
+  
   // Combo indicator
   if (comboCount > 1) {
     ctx.fillStyle = '#FFA502';
@@ -1125,6 +1161,76 @@ function drawUI() {
     ctx.fillText(`🔥 ${comboCount}x Combo!`, W / 2, panelY + panelH + 40);
     ctx.shadowBlur = 0;
   }
+}
+
+function drawTutorial() {
+  if (!showTutorial) return;
+  
+  // Semi-transparent overlay
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+  ctx.fillRect(0, 0, W, H);
+  
+  // Tutorial card
+  const cardW = Math.min(340, W - 40);
+  const cardH = 320;
+  const cardX = (W - cardW) / 2;
+  const cardY = (H - cardH) / 2;
+  
+  // Card
+  ctx.fillStyle = 'rgba(25, 25, 60, 0.98)';
+  ctx.shadowColor = '#1E90FF';
+  ctx.shadowBlur = 30;
+  ctx.beginPath();
+  ctx.roundRect(cardX, cardY, cardW, cardH, 24);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  
+  ctx.strokeStyle = 'rgba(30, 144, 255, 0.4)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.roundRect(cardX, cardY, cardW, cardH, 24);
+  ctx.stroke();
+  
+  // Title
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 26px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('How to Play', W / 2, cardY + 45);
+  
+  // Instructions
+  ctx.font = '14px system-ui, sans-serif';
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+  const instructions = [
+    '🧩 Drag blocks onto the grid',
+    '📏 Fill rows or columns to clear them',
+    '🔥 Combos clear multiple lines!',
+    '⭐ Score points for each block placed',
+    '💀 Game ends when nothing fits'
+  ];
+  instructions.forEach((text, i) => {
+    ctx.fillText(text, W / 2, cardY + 85 + i * 28);
+  });
+  
+  // Play button
+  const btnW = 180;
+  const btnH = 50;
+  const btnX = (W - btnW) / 2;
+  const btnY = cardY + cardH - 70;
+  
+  const btnGrad = ctx.createLinearGradient(btnX, btnY, btnX, btnY + btnH);
+  btnGrad.addColorStop(0, '#2ED573');
+  btnGrad.addColorStop(1, '#27AE60');
+  ctx.fillStyle = btnGrad;
+  ctx.shadowColor = '#2ED573';
+  ctx.shadowBlur = 15;
+  ctx.beginPath();
+  ctx.roundRect(btnX, btnY, btnW, btnH, 25);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 18px system-ui, sans-serif';
+  ctx.fillText('Let\'s Play!', W / 2, btnY + btnH / 2 + 1);
 }
 
 function drawGameOver() {
@@ -1270,6 +1376,7 @@ function gameLoop(timestamp) {
   drawLineClearAnim(dt);
   drawScorePopups(dt);
   drawUI();
+  drawTutorial();
   drawGameOver();
   
   ctx.restore();
