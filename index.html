@@ -248,30 +248,24 @@ function drawGrid(){
 }
 
 function drawBlock(r,c,col,a,ghost){
-  const x=gx+c*cs,y=gy+r*cs,s=cs-4,in=2;
+  const x=gx+c*cs,y=gy+r*cs,s=cs-4,pd=2;
   const cl=COLORS[col];
   X.globalAlpha=a;
-  // shadow
-  if(!ghost){X.fillStyle='rgba(0,0,0,.35)';X.beginPath();X.roundRect(x+in+2,y+in+2,s,s,6);X.fill();}
-  // body
-  const g=X.createLinearGradient(x+in,y+in,x+in+s,y+in+s);
+  if(!ghost){X.fillStyle='rgba(0,0,0,.35)';X.beginPath();X.roundRect(x+pd+2,y+pd+2,s,s,6);X.fill();}
+  const g=X.createLinearGradient(x+pd,y+pd,x+pd+s,y+pd+s);
   g.addColorStop(0,cl[0]);g.addColorStop(1,cl[1]);
-  X.fillStyle=g;X.beginPath();X.roundRect(x+in,y+in,s,s,6);X.fill();
+  X.fillStyle=g;X.beginPath();X.roundRect(x+pd,y+pd,s,s,6);X.fill();
   if(!ghost){
-    // top highlight
-    const h=X.createLinearGradient(x+in,y+in,x+in,y+in+s*.4);
+    const h=X.createLinearGradient(x+pd,y+pd,x+pd,y+pd+s*.4);
     h.addColorStop(0,'rgba(255,255,255,.3)');h.addColorStop(1,'rgba(255,255,255,0)');
-    X.fillStyle=h;X.beginPath();X.roundRect(x+in+2,y+in+2,s-4,s*.4,[6,6,0,0]);X.fill();
-    // bottom shadow
-    const b=X.createLinearGradient(x+in,y+in+s*.65,x+in,y+in+s);
+    X.fillStyle=h;X.beginPath();X.roundRect(x+pd+2,y+pd+2,s-4,s*.4,[6,6,0,0]);X.fill();
+    const b=X.createLinearGradient(x+pd,y+pd+s*.65,x+pd,y+pd+s);
     b.addColorStop(0,'rgba(0,0,0,0)');b.addColorStop(1,'rgba(0,0,0,.2)');
-    X.fillStyle=b;X.beginPath();X.roundRect(x+in+2,y+in+s*.65,s-4,s*.3,[0,0,6,6]);X.fill();
-    // border
+    X.fillStyle=b;X.beginPath();X.roundRect(x+pd+2,y+pd+s*.65,s-4,s*.3,[0,0,6,6]);X.fill();
     X.strokeStyle='rgba(255,255,255,.18)';X.lineWidth=.8;
-    X.beginPath();X.roundRect(x+in+.5,y+in+.5,s-1,s-1,5);X.stroke();
-    // specular
+    X.beginPath();X.roundRect(x+pd+.5,y+pd+.5,s-1,s-1,5);X.stroke();
     X.fillStyle='rgba(255,255,255,.45)';
-    X.beginPath();X.ellipse(x+in+s*.22,y+in+s*.2,s*.12,s*.08,-.4,0,6.28);X.fill();
+    X.beginPath();X.ellipse(x+pd+s*.22,y+pd+s*.2,s*.12,s*.08,-.4,0,6.28);X.fill();
   }
   X.globalAlpha=1;
 }
