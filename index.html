@@ -16,6 +16,24 @@ canvas{display:block;width:100%;height:100%;touch-action:none}
 <script>
 'use strict';
 
+// roundRect polyfill for older browsers
+if (!CanvasRenderingContext2D.prototype.roundRect) {
+  CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, radii) {
+    const r = typeof radii === 'number' ? radii : (Array.isArray(radii) ? radii[0] : 0);
+    this.moveTo(x + r, y);
+    this.lineTo(x + w - r, y);
+    this.quadraticCurveTo(x + w, y, x + w, y + r);
+    this.lineTo(x + w, y + h - r);
+    this.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    this.lineTo(x + r, y + h);
+    this.quadraticCurveTo(x, y + h, x, y + h - r);
+    this.lineTo(x, y + r);
+    this.quadraticCurveTo(x, y, x + r, y);
+    this.closePath();
+    return this;
+  };
+}
+
 // ============================================================
 // BLOCK BLAST — Premium Clone with 3D visuals, particles, ray-traced feel
 // ============================================================
@@ -35,6 +53,81 @@ const COLORS = [
   ['#00D2D3','#00B4D8'], // cyan
   ['#FECA57','#F39C12'], // gold
 ];
+
+let soundEnabled = true;
+function toggleSound() {
+  soundEnabled = !soundEnabled;
+  if (soundEnabled) initAudio();
+}
+function initAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+}
+function playSound(type) {
+  if (!soundEnabled) return;
+  if (!audioCtx) return;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  const now = audioCtx.currentTime;
+  
+  if (type === 'place') {
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(600, now);
+    osc.frequency.exponentialRampToValueAtTime(400, now + 0.1);
+    gain.gain.setValueAtTime(0.15, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+    osc.start(now);
+    osc.stop(now + 0.15);
+  } else if (type === 'clear') {
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(500, now);
+    osc.frequency.exponentialRampToValueAtTime(1200, now + 0.2);
+    gain.gain.setValueAtTime(0.2, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+    osc.start(now);
+    osc.stop(now + 0.3);
+    // Second tone
+    const osc2 = audioCtx.createOscillator();
+    const gain2 = audioCtx.createGain();
+    osc2.connect(gain2);
+    gain2.connect(audioCtx.destination);
+    osc2.type = 'triangle';
+    osc2.frequency.setValueAtTime(800, now + 0.05);
+    osc2.frequency.exponentialRampToValueAtTime(1600, now + 0.25);
+    gain2.gain.setValueAtTime(0.1, now + 0.05);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+    osc2.start(now + 0.05);
+    osc2.stop(now + 0.35);
+  } else if (type === 'combo') {
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(800, now);
+    osc.frequency.exponentialRampToValueAtTime(1600, now + 0.15);
+    osc.frequency.exponentialRampToValueAtTime(2000, now + 0.3);
+    gain.gain.setValueAtTime(0.18, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+    osc.start(now);
+    osc.stop(now + 0.4);
+  } else if (type === 'gameover') {
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(400, now);
+    osc.frequency.exponentialRampToValueAtTime(100, now + 0.5);
+    gain.gain.setValueAtTime(0.15, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+    osc.start(now);
+    osc.stop(now + 0.6);
+  } else if (type === 'pickup') {
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(800, now);
+    osc.frequency.exponentialRampToValueAtTime(1000, now + 0.05);
+    gain.gain.setValueAtTime(0.08, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+    osc.start(now);
+    osc.stop(now + 0.08);
+  }
+}
 
 // ---- State ----
 let W, H;
@@ -62,7 +155,6 @@ let animFrame = 0;
 let bgStars = [];
 let gridPulse = 0;
 let comboTimer = 0;
-let lastComboCount = 0;
 let bgGradientAngle = 0;
 let ambientParticles = [];
 let initialized = false;
@@ -209,6 +301,7 @@ function placePiece(piece, row, col) {
     }
   }
   score += placed;
+  playSound('place');
   checkLines();
   piece.placed = true;
 }
@@ -277,6 +370,11 @@ function checkLines() {
     
     shakeAmount = 12;
     gridPulse = 1;
+    if (totalCleared >= 2) {
+      playSound('combo');
+    } else {
+      playSound('clear');
+    }
   } else {
     comboCount = 0;
   }
@@ -412,10 +510,22 @@ function getEventPos(e) {
 
 function onPointerDown(e) {
   e.preventDefault();
-  if (gameOver) { resetGame(); return; }
+  initAudio();
+  
+  // Sound toggle button check
   const pos = getEventPos(e);
+  const btnSize = 36;
+  const btnX = W - 50;
+  const btnY = 30;
+  if (pos.x >= btnX && pos.x <= btnX + btnSize && pos.y >= btnY && pos.y <= btnY + btnSize) {
+    toggleSound();
+    return;
+  }
+  
+  if (gameOver) { resetGame(); return; }
   const piece = getPieceAt(pos.x, pos.y);
   if (piece) {
+    playSound('pickup');
     dragging = piece;
     const pieceData = pieces[piece.index];
     const piecePos = getPiecePosition(piece.index);
@@ -459,6 +569,7 @@ function onPointerUp(e) {
       if (isGameOver()) {
         gameOver = true;
         gameOverAnim = 0;
+        playSound('gameover');
       }
     }
     dragging = null;
@@ -984,6 +1095,25 @@ function drawUI() {
   ctx.fillStyle = 'rgba(255, 165, 2, 0.8)';
   ctx.font = '11px system-ui, sans-serif';
   ctx.fillText(`★ ${highScore}`, W / 2, panelY + panelH + 18);
+  
+  // Sound toggle button (top right)
+  const btnSize = 36;
+  const btnX = W - 50;
+  const btnY = 30;
+  ctx.fillStyle = 'rgba(15, 15, 40, 0.6)';
+  ctx.beginPath();
+  ctx.roundRect(btnX, btnY, btnSize, btnSize, 10);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(30, 144, 255, 0.3)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.roundRect(btnX, btnY, btnSize, btnSize, 10);
+  ctx.stroke();
+  ctx.fillStyle = soundEnabled ? '#2ED573' : '#FF4757';
+  ctx.font = '18px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(soundEnabled ? '🔊' : '🔇', W - 32, btnY + btnSize / 2 + 1);
   
   // Combo indicator
   if (comboCount > 1) {
