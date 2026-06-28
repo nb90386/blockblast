@@ -1,0 +1,961 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Block Blast</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none}
+  html,body{width:100%;height:100%;overflow:hidden;background:#0a0a1a;font-family:'Segoe UI',system-ui,-apple-system,sans-serif}
+  canvas{display:block;width:100%;height:100%;touch-action:none}
+</style>
+</head>
+<body>
+<canvas id="gc"></canvas>
+<script>
+'use strict';
+
+// ============================================================
+// BLOCK BLAST — Premium Clone
+// ============================================================
+
+const canvas = document.getElementById('gc');
+const ctx = canvas.getContext('2d');
+
+// ---- Constants ----
+const GRID = 8;
+const COLORS = [
+  ['#FF6B6B','#EE5A5A'], // red
+  ['#FECA57','#FDBB30'], // yellow
+  ['#48DBFB','#32C8E8'], // cyan
+  ['#FF9FF3','#F97FE0'], // pink
+  ['#54E346','#3DC830'], // green
+  ['#5F7FFF','#4060EE'], // blue
+  ['#FF6348','#EE5535'], // orange
+  ['#C56CF0','#B44DE0'], // purple
+];
+
+// ---- State ----
+let grid = [];
+let cellSize = 0;
+let gridX = 0, gridY = 0;
+let score = 0;
+let highScore = parseInt(localStorage.getItem('blockblast_hs') || '0');
+let pieces = [];
+let dragging = null;
+let dragOffsetX = 0, dragOffsetY = 0;
+let mouseX = 0, mouseY = 0;
+let ghostValid = false;
+let ghostGridX = 0, ghostGridY = 0;
+let particles = [];
+let lineClearAnim = [];
+let scorePopups = [];
+let comboCount = 0;
+let gameOver = false;
+let gameOverAnim = 0;
+let shakeAmount = 0;
+let lastTime = 0;
+let animFrame = 0;
+let bgStars = [];
+
+// ---- Piece Definitions ----
+const PIECE_SHAPES = [
+  [[1]], // single
+  [[1,1]], // h2
+  [[1],[1]], // v2
+  [[1,1,1]], // h3
+  [[1],[1],[1]], // v3
+  [[1,1],[1,1]], // square
+  [[1,1,1],[0,1,0]], // t
+  [[0,1,0],[1,1,1]], // t inv
+  [[1,0],[1,0],[1,1]], // l
+  [[0,1],[0,1],[1,1]], // l mirror
+  [[1,1,0],[0,1,1]], // z
+  [[0,1,1],[1,1,0]], // z mirror
+  [[1,1,1],[1,0,0]], // L
+  [[1,0,0],[1,1,1]], // L mirror
+  [[1,1],[1,0]], // small l
+  [[1,1],[0,1]], // small l mirror
+  [[1,1,1,1]], // h4
+  [[1],[1],[1],[1]], // v4
+];
+
+// ---- Resize ----
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = window.innerWidth * dpr;
+  canvas.height = window.innerHeight * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  
+  // Calculate grid size - leave room for pieces below and UI above
+  const topPadding = 100;
+  const bottomPadding = 180;
+  const sidePadding = 20;
+  
+  const availW = w - sidePadding * 2;
+  const availH = h - topPadding - bottomPadding;
+  cellSize = Math.floor(Math.min(availW / GRID, availH / GRID));
+  
+  gridX = Math.floor((w - cellSize * GRID) / 2);
+  gridY = topPadding + Math.floor((availH - cellSize * GRID) / 2);
+  
+  // Generate background stars
+  bgStars = [];
+  for (let i = 0; i < 80; i++) {
+    bgStars.push({
+      x: Math.random() * w,
+      y: Math.random() * h,
+      size: Math.random() * 2 + 0.5,
+      alpha: Math.random() * 0.5 + 0.3,
+      speed: Math.random() * 0.3 + 0.1,
+      twinkle: Math.random() * Math.PI * 2
+    });
+  }
+}
+
+// ---- Grid ----
+function initGrid() {
+  for (let r = 0; r < GRID; r++) {
+    grid[r] = [];
+    for (let c = 0; c < GRID; c++) {
+      grid[r][c] = null;
+    }
+  }
+}
+
+// ---- Piece Generation ----
+function createPiece() {
+  const shape = PIECE_SHAPES[Math.floor(Math.random() * PIECE_SHAPES.length)];
+  const colorIdx = Math.floor(Math.random() * COLORS.length);
+  return {
+    shape: shape.map(row => [...row]),
+    colorIdx,
+    placed: false,
+    animScale: 0,
+    animDelay: Math.random() * 0.15
+  };
+}
+
+function generatePieces() {
+  pieces = [createPiece(), createPiece(), createPiece()];
+}
+
+// ---- Collision / Placement ----
+function canPlace(piece, row, col) {
+  for (let r = 0; r < piece.shape.length; r++) {
+    for (let c = 0; c < piece.shape[r].length; c++) {
+      if (piece.shape[r][c]) {
+        const gr = row + r;
+        const gc = col + c;
+        if (gr < 0 || gr >= GRID || gc < 0 || gc >= GRID) return false;
+        if (grid[gr][gc]) return false;
+      }
+    }
+  }
+  return true;
+}
+
+function canPlaceAnywhere(piece) {
+  for (let r = 0; r < GRID; r++) {
+    for (let c = 0; c < GRID; c++) {
+      if (canPlace(piece, r, c)) return true;
+    }
+  }
+  return false;
+}
+
+function placePiece(piece, row, col) {
+  let placed = 0;
+  for (let r = 0; r < piece.shape.length; r++) {
+    for (let c = 0; c < piece.shape[r].length; c++) {
+      if (piece.shape[r][c]) {
+        grid[row + r][col + c] = piece.colorIdx;
+        placed++;
+        spawnPlaceParticles(row + r, col + c, piece.colorIdx);
+      }
+    }
+  }
+  score += placed;
+  checkLines();
+  piece.placed = true;
+}
+
+// ---- Line Clearing ----
+function checkLines() {
+  let rowsCleared = [];
+  let colsCleared = [];
+  
+  for (let r = 0; r < GRID; r++) {
+    let full = true;
+    for (let c = 0; c < GRID; c++) { if (!grid[r][c]) { full = false; break; } }
+    if (full) rowsCleared.push(r);
+  }
+  
+  for (let c = 0; c < GRID; c++) {
+    let full = true;
+    for (let r = 0; r < GRID; r++) { if (!grid[r][c]) { full = false; break; } }
+    if (full) colsCleared.push(c);
+  }
+  
+  const totalCleared = rowsCleared.length + colsCleared.length;
+  
+  if (totalCleared > 0) {
+    // Animation for line clear
+    rowsCleared.forEach(r => {
+      for (let c = 0; c < GRID; c++) {
+        lineClearAnim.push({ row: r, col: c, progress: 0, color: grid[r][c] });
+        spawnClearParticles(r, c, grid[r][c]);
+        grid[r][c] = null;
+      }
+    });
+    colsCleared.forEach(c => {
+      for (let r = 0; r < GRID; r++) {
+        if (!lineClearAnim.find(a => a.row === r && a.col === c)) {
+          lineClearAnim.push({ row: r, col: c, progress: 0, color: grid[r][c] });
+          spawnClearParticles(r, c, grid[r][c]);
+          grid[r][c] = null;
+        }
+      }
+    });
+    
+    // Score bonus
+    let bonus = totalCleared * 10;
+    if (totalCleared >= 2) bonus *= 2; // combo multiplier
+    score += bonus;
+    comboCount++;
+    
+    scorePopups.push({
+      x: gridX + cellSize * GRID / 2,
+      y: gridY + cellSize * GRID / 2,
+      text: `+${totalCleared * GRID + bonus}`,
+      progress: 0,
+      color: totalCleared >= 2 ? '#FECA57' : '#48DBFB',
+      combo: totalCleared >= 2 ? `${totalCleared}x COMBO!` : null
+    });
+    
+    shakeAmount = 8;
+  } else {
+    comboCount = 0;
+  }
+}
+
+// ---- Particles ----
+function spawnPlaceParticles(row, col, colorIdx) {
+  const cx = gridX + col * cellSize + cellSize / 2;
+  const cy = gridY + row * cellSize + cellSize / 2;
+  const color = COLORS[colorIdx][0];
+  for (let i = 0; i < 6; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 120 + 60;
+    particles.push({
+      x: cx, y: cy,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 1,
+      decay: Math.random() * 2 + 2,
+      size: Math.random() * 4 + 2,
+      color
+    });
+  }
+}
+
+function spawnClearParticles(row, col, colorIdx) {
+  const cx = gridX + col * cellSize + cellSize / 2;
+  const cy = gridY + row * cellSize + cellSize / 2;
+  const color = COLORS[colorIdx] ? COLORS[colorIdx][0] : '#ffffff';
+  for (let i = 0; i < 12; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 200 + 80;
+    particles.push({
+      x: cx, y: cy,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 1,
+      decay: Math.random() * 1.5 + 1.5,
+      size: Math.random() * 6 + 3,
+      color,
+      gravity: 200
+    });
+  }
+}
+
+function spawnPreviewParticles(row, col, colorIdx) {
+  const cx = gridX + col * cellSize + cellSize / 2;
+  const cy = gridY + row * cellSize + cellSize / 2;
+  const color = COLORS[colorIdx][0];
+  for (let i = 0; i < 3; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 40 + 20;
+    particles.push({
+      x: cx, y: cy,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 30,
+      life: 1,
+      decay: Math.random() * 2 + 2,
+      size: Math.random() * 3 + 1,
+      color,
+      alpha: 0.6
+    });
+  }
+}
+
+// ---- Game Logic ----
+function isGameOver() {
+  for (const p of pieces) {
+    if (!p.placed && canPlaceAnywhere(p)) return false;
+  }
+  return true;
+}
+
+function resetGame() {
+  initGrid();
+  score = 0;
+  comboCount = 0;
+  gameOver = false;
+  gameOverAnim = 0;
+  particles = [];
+  lineClearAnim = [];
+  scorePopups = [];
+  generatePieces();
+}
+
+// ---- Piece Positioning (for bottom bar) ----
+function getPiecePosition(index) {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  const bottomY = h - 130;
+  const spacing = 130;
+  const totalWidth = spacing * 2;
+  const startX = (w - totalWidth) / 2 + 65;
+  return { x: startX + index * spacing, y: bottomY };
+}
+
+function getPieceBounds(pos, piece) {
+  const cols = piece.shape[0].length;
+  const rows = piece.shape.length;
+  // Size pieces to fit nicely in the bottom bar
+  const barCellSize = Math.min(cellSize * 0.7, 30);
+  return {
+    x: pos.x - cols * barCellSize / 2,
+    y: pos.y - rows * barCellSize / 2,
+    w: cols * barCellSize,
+    h: rows * barCellSize,
+    cellSize: barCellSize
+  };
+}
+
+function getPieceAt(x, y) {
+  for (let i = 0; i < pieces.length; i++) {
+    if (pieces[i].placed) continue;
+    const pos = getPiecePosition(i);
+    const bounds = getPieceBounds(pos, pieces[i]);
+    if (x >= bounds.x && x <= bounds.x + bounds.w && y >= bounds.y && y <= bounds.y + bounds.h) {
+      // Check if clicking on an actual cell of the piece
+      const localX = x - bounds.x;
+      const localY = y - bounds.y;
+      const col = Math.floor(localX / bounds.cellSize);
+      const row = Math.floor(localY / bounds.cellSize);
+      if (row >= 0 && row < pieces[i].shape.length && col >= 0 && col < pieces[i].shape[0].length) {
+        if (pieces[i].shape[row][col]) {
+          return { index: i, offsetCol: col, offsetRow: row };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+// ---- Mouse/Touch ----
+function getEventPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  const touch = e.touches ? e.touches[0] || e.changedTouches[0] : e;
+  return {
+    x: touch.clientX - rect.left,
+    y: touch.clientY - rect.top
+  };
+}
+
+function onPointerDown(e) {
+  e.preventDefault();
+  if (gameOver) { resetGame(); return; }
+  const pos = getEventPos(e);
+  const piece = getPieceAt(pos.x, pos.y);
+  if (piece) {
+    dragging = piece;
+    const pieceData = pieces[piece.index];
+    const piecePos = getPiecePosition(piece.index);
+    const bounds = getPieceBounds(piecePos, pieceData);
+    dragOffsetX = pos.x - bounds.x + piece.offsetCol * bounds.cellSize;
+    dragOffsetY = pos.y - bounds.y + piece.offsetRow * bounds.cellSize;
+    mouseX = pos.x;
+    mouseY = pos.y;
+  }
+}
+
+function onPointerMove(e) {
+  e.preventDefault();
+  const pos = getEventPos(e);
+  mouseX = pos.x;
+  mouseY = pos.y;
+  
+  if (dragging) {
+    // Calculate ghost position
+    const piece = pieces[dragging.index];
+    const relX = mouseX - dragOffsetX;
+    const relY = mouseY - dragOffsetY;
+    const gridRelX = relX - gridX;
+    const gridRelY = relY - gridY;
+    ghostGridX = Math.round(gridRelX / cellSize);
+    ghostGridY = Math.round(gridRelY / cellSize);
+    ghostValid = canPlace(piece, ghostGridY, ghostGridX);
+  }
+}
+
+function onPointerUp(e) {
+  e.preventDefault();
+  if (dragging) {
+    const piece = pieces[dragging.index];
+    if (ghostValid && canPlace(piece, ghostGridY, ghostGridX)) {
+      placePiece(piece, ghostGridY, ghostGridX);
+      
+      // Check if all pieces placed
+      if (pieces.every(p => p.placed)) {
+        generatePieces();
+      }
+      
+      // Check game over
+      if (isGameOver()) {
+        gameOver = true;
+        gameOverAnim = 0;
+      }
+    }
+    dragging = null;
+    ghostValid = false;
+  }
+}
+
+canvas.addEventListener('mousedown', onPointerDown);
+canvas.addEventListener('mousemove', onPointerMove);
+canvas.addEventListener('mouseup', onPointerUp);
+canvas.addEventListener('mouseleave', onPointerUp);
+canvas.addEventListener('touchstart', onPointerDown, { passive: false });
+canvas.addEventListener('touchmove', onPointerMove, { passive: false });
+canvas.addEventListener('touchend', onPointerUp, { passive: false });
+canvas.addEventListener('touchcancel', onPointerUp, { passive: false });
+
+// ---- Drawing ----
+function drawBackground() {
+  // Dark gradient background
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, '#0a0a1a');
+  grad.addColorStop(0.5, '#0d1025');
+  grad.addColorStop(1, '#0a0a1a');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, w, h);
+  
+  // Stars
+  const time = Date.now() * 0.001;
+  bgStars.forEach(star => {
+    const twinkle = Math.sin(time * star.speed * 3 + star.twinkle) * 0.3 + 0.7;
+    ctx.globalAlpha = star.alpha * twinkle;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+}
+
+function drawGrid() {
+  const w = window.innerWidth;
+  
+  // Grid background with subtle glow
+  ctx.shadowColor = '#5F7FFF';
+  ctx.shadowBlur = 20;
+  ctx.fillStyle = 'rgba(20, 20, 50, 0.8)';
+  ctx.beginPath();
+  ctx.roundRect(gridX - 4, gridY - 4, cellSize * GRID + 8, cellSize * GRID + 8, 12);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  
+  // Grid lines
+  for (let r = 0; r <= GRID; r++) {
+    ctx.strokeStyle = 'rgba(95, 127, 255, 0.15)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(gridX, gridY + r * cellSize);
+    ctx.lineTo(gridX + cellSize * GRID, gridY + r * cellSize);
+    ctx.stroke();
+  }
+  for (let c = 0; c <= GRID; c++) {
+    ctx.strokeStyle = 'rgba(95, 127, 255, 0.15)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(gridX + c * cellSize, gridY);
+    ctx.lineTo(gridX + c * cellSize, gridY + cellSize * GRID);
+    ctx.stroke();
+  }
+  
+  // Placed blocks
+  for (let r = 0; r < GRID; r++) {
+    for (let c = 0; c < GRID; c++) {
+      if (grid[r][c] !== null) {
+        drawBlock(r, c, grid[r][c], 1);
+      }
+    }
+  }
+  
+  // Ghost preview
+  if (dragging && ghostValid !== undefined) {
+    const piece = pieces[dragging.index];
+    for (let r = 0; r < piece.shape.length; r++) {
+      for (let c = 0; c < piece.shape[r].length; c++) {
+        if (piece.shape[r][c]) {
+          const gr = ghostGridY + r;
+          const gc = ghostGridX + c;
+          if (gr >= 0 && gr < GRID && gc >= 0 && gc < GRID) {
+            drawBlock(gr, gc, piece.colorIdx, ghostValid ? 0.5 : 0.2, true);
+          }
+        }
+      }
+    }
+  }
+}
+
+function drawBlock(row, col, colorIdx, alpha = 1, isGhost = false) {
+  const x = gridX + col * cellSize;
+  const y = gridY + row * cellSize;
+  const s = cellSize - 3;
+  const inset = 1.5;
+  const colors = COLORS[colorIdx];
+  
+  ctx.globalAlpha = alpha;
+  
+  // Main block with gradient
+  const grad = ctx.createLinearGradient(x + inset, y + inset, x + inset + s, y + inset + s);
+  grad.addColorStop(0, colors[0]);
+  grad.addColorStop(1, colors[1]);
+  
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.roundRect(x + inset, y + inset, s, s, 6);
+  ctx.fill();
+  
+  // Top highlight (3D effect)
+  if (!isGhost) {
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    ctx.beginPath();
+    ctx.roundRect(x + inset + 2, y + inset + 2, s - 4, s * 0.35, [6, 6, 0, 0]);
+    ctx.fill();
+    
+    // Inner shadow at bottom
+    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+    ctx.beginPath();
+    ctx.roundRect(x + inset + 2, y + inset + s * 0.65, s - 4, s * 0.3, [0, 0, 6, 6]);
+    ctx.fill();
+    
+    // Subtle border
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(x + inset, y + inset, s, s, 6);
+    ctx.stroke();
+  }
+  
+  ctx.globalAlpha = 1;
+}
+
+function drawPieces() {
+  const time = Date.now() * 0.001;
+  
+  for (let i = 0; i < pieces.length; i++) {
+    const piece = pieces[i];
+    if (piece.placed) continue;
+    
+    const pos = getPiecePosition(i);
+    const bounds = getPieceBounds(pos, piece);
+    
+    // Entrance animation
+    const scale = Math.min(1, piece.animScale);
+    const bounce = 1 + Math.sin(time * 3 + i * 0.8) * 0.03;
+    const finalScale = scale * bounce;
+    
+    ctx.save();
+    ctx.translate(pos.x, pos.y);
+    ctx.scale(finalScale, finalScale);
+    ctx.translate(-pos.x, -pos.y);
+    
+    // Draw piece blocks
+    for (let r = 0; r < piece.shape.length; r++) {
+      for (let c = 0; c < piece.shape[r].length; c++) {
+        if (piece.shape[r][c]) {
+          const bx = bounds.x + c * bounds.cellSize;
+          const by = bounds.y + r * bounds.cellSize;
+          const s = bounds.cellSize - 2;
+          
+          const colors = COLORS[piece.colorIdx];
+          const grad = ctx.createLinearGradient(bx, by, bx + s, by + s);
+          grad.addColorStop(0, colors[0]);
+          grad.addColorStop(1, colors[1]);
+          
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          ctx.roundRect(bx + 1, by + 1, s, s, 4);
+          ctx.fill();
+          
+          // Highlight
+          ctx.fillStyle = 'rgba(255,255,255,0.2)';
+          ctx.beginPath();
+          ctx.roundRect(bx + 2, by + 2, s - 4, s * 0.35, [4, 4, 0, 0]);
+          ctx.fill();
+          
+          // Border
+          ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+          ctx.lineWidth = 0.5;
+          ctx.beginPath();
+          ctx.roundRect(bx + 1, by + 1, s, s, 4);
+          ctx.stroke();
+        }
+      }
+    }
+    
+    ctx.restore();
+  }
+}
+
+function drawDraggedPiece() {
+  if (!dragging) return;
+  const piece = pieces[dragging.index];
+  const bounds = getPieceBounds({ x: mouseX - dragOffsetX, y: mouseY - dragOffsetY }, piece);
+  
+  ctx.save();
+  ctx.globalAlpha = 0.85;
+  ctx.scale(1.1, 1.1);
+  ctx.translate(-mouseX * 0.1 + dragOffsetX * 0.1, -mouseY * 0.1 + dragOffsetY * 0.1);
+  
+  for (let r = 0; r < piece.shape.length; r++) {
+    for (let c = 0; c < piece.shape[r].length; c++) {
+      if (piece.shape[r][c]) {
+        const bx = mouseX - dragOffsetX + c * cellSize;
+        const by = mouseY - dragOffsetY + r * cellSize;
+        const s = cellSize - 3;
+        
+        const colors = COLORS[piece.colorIdx];
+        const grad = ctx.createLinearGradient(bx, by, bx + s, by + s);
+        grad.addColorStop(0, colors[0]);
+        grad.addColorStop(1, colors[1]);
+        
+        // Shadow
+        ctx.shadowColor = colors[0];
+        ctx.shadowBlur = 15;
+        
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.roundRect(bx + 1.5, by + 1.5, s, s, 6);
+        ctx.fill();
+        
+        ctx.shadowBlur = 0;
+        
+        // Highlight
+        ctx.fillStyle = 'rgba(255,255,255,0.3)';
+        ctx.beginPath();
+        ctx.roundRect(bx + 3, by + 3, s - 6, s * 0.35, [6, 6, 0, 0]);
+        ctx.fill();
+      }
+    }
+  }
+  
+  ctx.restore();
+}
+
+function drawParticles(dt) {
+  particles.forEach(p => {
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    if (p.gravity) p.vy += p.gravity * dt;
+    p.life -= p.decay * dt;
+    
+    if (p.life > 0) {
+      ctx.globalAlpha = p.life * (p.alpha || 1);
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Glow
+      ctx.shadowColor = p.color;
+      ctx.shadowBlur = 8;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * p.life * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+  });
+  ctx.globalAlpha = 1;
+  particles = particles.filter(p => p.life > 0);
+}
+
+function drawLineClearAnim(dt) {
+  lineClearAnim.forEach(a => {
+    a.progress += dt * 4;
+    if (a.progress < 1) {
+      const x = gridX + a.col * cellSize + cellSize / 2;
+      const y = gridY + a.row * cellSize + cellSize / 2;
+      const scale = 1 + a.progress * 0.5;
+      const alpha = 1 - a.progress;
+      
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = '#ffffff';
+      ctx.shadowColor = COLORS[a.color] ? COLORS[a.color][0] : '#ffffff';
+      ctx.shadowBlur = 20;
+      ctx.beginPath();
+      ctx.arc(x, y, cellSize * 0.4 * scale, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      
+      // Expanding ring
+      ctx.strokeStyle = COLORS[a.color] ? COLORS[a.color][0] : '#ffffff';
+      ctx.lineWidth = 2 * (1 - a.progress);
+      ctx.beginPath();
+      ctx.arc(x, y, cellSize * 0.6 * a.progress, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  });
+  lineClearAnim = lineClearAnim.filter(a => a.progress < 1);
+}
+
+function drawScorePopups(dt) {
+  scorePopups.forEach(p => {
+    p.progress += dt * 1.5;
+    if (p.progress < 1) {
+      const alpha = 1 - p.progress;
+      const y = p.y - p.progress * 60;
+      const scale = 1 + p.progress * 0.3;
+      
+      ctx.save();
+      ctx.translate(p.x, y);
+      ctx.scale(scale, scale);
+      ctx.globalAlpha = alpha;
+      
+      // Combo text
+      if (p.combo && p.progress < 0.5) {
+        ctx.fillStyle = '#FECA57';
+        ctx.font = 'bold 18px "Segoe UI", system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(p.combo, 0, -25);
+      }
+      
+      // Score text
+      ctx.fillStyle = p.color;
+      ctx.font = 'bold 24px "Segoe UI", system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.shadowColor = p.color;
+      ctx.shadowBlur = 10;
+      ctx.fillText(p.text, 0, 0);
+      ctx.shadowBlur = 0;
+      
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+  });
+  scorePopups = scorePopups.filter(p => p.progress < 1);
+}
+
+function drawUI() {
+  const w = window.innerWidth;
+  const time = Date.now() * 0.001;
+  
+  // Score display
+  ctx.fillStyle = 'rgba(20, 20, 50, 0.6)';
+  ctx.beginPath();
+  ctx.roundRect(w / 2 - 80, 20, 160, 60, 16);
+  ctx.fill();
+  
+  ctx.fillStyle = 'rgba(95, 127, 255, 0.3)';
+  ctx.beginPath();
+  ctx.roundRect(w / 2 - 80, 20, 160, 60, 16);
+  ctx.stroke();
+  
+  // Score number
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 32px "Segoe UI", system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const scoreScale = 1 + Math.sin(time * 2) * 0.02;
+  ctx.save();
+  ctx.translate(w / 2, 42);
+  ctx.scale(scoreScale, scoreScale);
+  ctx.fillText(score.toString(), 0, 0);
+  ctx.restore();
+  
+  // "SCORE" label
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.font = '10px "Segoe UI", system-ui, sans-serif';
+  ctx.fillText('SCORE', w / 2, 70);
+  
+  // High score
+  ctx.fillStyle = 'rgba(254, 202, 87, 0.7)';
+  ctx.font = '11px "Segoe UI", system-ui, sans-serif';
+  ctx.fillText(`BEST: ${highScore}`, w / 2, 90);
+}
+
+function drawGameOver() {
+  if (!gameOver) return;
+  
+  gameOverAnim = Math.min(1, gameOverAnim + 0.03);
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  
+  // Overlay
+  ctx.fillStyle = `rgba(0, 0, 0, ${gameOverAnim * 0.7})`;
+  ctx.fillRect(0, 0, w, h);
+  
+  // Game Over card
+  const cardW = Math.min(300, w - 40);
+  const cardH = 220;
+  const cardX = (w - cardW) / 2;
+  const cardY = (h - cardH) / 2;
+  const slideIn = Math.min(1, gameOverAnim * 2);
+  const offsetY = (1 - slideIn) * 50;
+  
+  ctx.save();
+  ctx.translate(0, offsetY);
+  
+  // Card background
+  ctx.fillStyle = 'rgba(20, 20, 50, 0.95)';
+  ctx.shadowColor = '#FF6B6B';
+  ctx.shadowBlur = 30;
+  ctx.beginPath();
+  ctx.roundRect(cardX, cardY, cardW, cardH, 20);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  
+  // Border
+  ctx.strokeStyle = 'rgba(255, 107, 107, 0.5)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.roundRect(cardX, cardY, cardW, cardH, 20);
+  ctx.stroke();
+  
+  // Title
+  ctx.fillStyle = '#FF6B6B';
+  ctx.font = 'bold 28px "Segoe UI", system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Game Over', w / 2, cardY + 50);
+  
+  // Score
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 42px "Segoe UI", system-ui, sans-serif';
+  ctx.fillText(score.toString(), w / 2, cardY + 110);
+  
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.font = '12px "Segoe UI", system-ui, sans-serif';
+  ctx.fillText('POINTS', w / 2, cardY + 130);
+  
+  // New high score
+  if (score >= highScore && score > 0) {
+    ctx.fillStyle = '#FECA57';
+    ctx.font = 'bold 14px "Segoe UI", system-ui, sans-serif';
+    ctx.fillText('🏆 NEW HIGH SCORE!', w / 2, cardY + 155);
+  }
+  
+  // Restart button
+  const btnW = 160;
+  const btnH = 44;
+  const btnX = (w - btnW) / 2;
+  const btnY = cardY + cardH - 60;
+  
+  const btnGrad = ctx.createLinearGradient(btnX, btnY, btnX, btnY + btnH);
+  btnGrad.addColorStop(0, '#5F7FFF');
+  btnGrad.addColorStop(1, '#4060EE');
+  ctx.fillStyle = btnGrad;
+  ctx.beginPath();
+  ctx.roundRect(btnX, btnY, btnW, btnH, 22);
+  ctx.fill();
+  
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 16px "Segoe UI", system-ui, sans-serif';
+  ctx.fillText('Play Again', w / 2, btnY + btnH / 2 + 1);
+  
+  ctx.restore();
+}
+
+// ---- Update ----
+function update(dt) {
+  // Update piece animations
+  pieces.forEach(p => {
+    if (!p.placed && p.animScale < 1) {
+      p.animScale = Math.min(1, p.animScale + dt * 3);
+    }
+  });
+  
+  // Update shake
+  if (shakeAmount > 0) {
+    shakeAmount *= 0.9;
+    if (shakeAmount < 0.5) shakeAmount = 0;
+  }
+  
+  // Update high score
+  if (score > highScore) {
+    highScore = score;
+    localStorage.setItem('blockblast_hs', highScore.toString());
+  }
+}
+
+// ---- Main Loop ----
+function gameLoop(timestamp) {
+  const dt = Math.min((timestamp - lastTime) / 1000, 0.05);
+  lastTime = timestamp;
+  animFrame++;
+  
+  update(dt);
+  
+  // Apply shake
+  ctx.save();
+  if (shakeAmount > 0) {
+    ctx.translate(
+      (Math.random() - 0.5) * shakeAmount,
+      (Math.random() - 0.5) * shakeAmount
+    );
+  }
+  
+  drawBackground();
+  drawGrid();
+  drawPieces();
+  drawDraggedPiece();
+  drawParticles(dt);
+  drawLineClearAnim(dt);
+  drawScorePopups(dt);
+  drawUI();
+  drawGameOver();
+  
+  ctx.restore();
+  
+  requestAnimationFrame(gameLoop);
+}
+
+// ---- Init ----
+function init() {
+  resize();
+  initGrid();
+  generatePieces();
+  lastTime = performance.now();
+  requestAnimationFrame(gameLoop);
+}
+
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 100));
+
+// Prevent scrolling on mobile
+document.body.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+
+init();
+</script>
+</body>
+</html>
