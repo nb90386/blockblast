@@ -2,12 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>Block Blast</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Block Blast!</title>
 <style>
-  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none}
-  html,body{width:100%;height:100%;overflow:hidden;background:#0a0a1a;font-family:'Segoe UI',system-ui,-apple-system,sans-serif}
-  canvas{display:block;width:100%;height:100%;touch-action:none}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+html,body{width:100%;height:100%;overflow:hidden;background:#1a1a2e;font-family:'Nunito',system-ui,-apple-system,sans-serif}
+canvas{display:block;width:100%;height:100%;touch-action:none}
+@font-face{font-family:'Nunito';src:local('Nunito'),local('Nunito-Regular')}
 </style>
 </head>
 <body>
@@ -16,7 +17,7 @@
 'use strict';
 
 // ============================================================
-// BLOCK BLAST — Premium Clone
+// BLOCK BLAST — Premium Clone with 3D visuals, particles, ray-traced feel
 // ============================================================
 
 const canvas = document.getElementById('gc');
@@ -25,22 +26,23 @@ const ctx = canvas.getContext('2d');
 // ---- Constants ----
 const GRID = 8;
 const COLORS = [
-  ['#FF6B6B','#EE5A5A'], // red
-  ['#FECA57','#FDBB30'], // yellow
-  ['#48DBFB','#32C8E8'], // cyan
-  ['#FF9FF3','#F97FE0'], // pink
-  ['#54E346','#3DC830'], // green
-  ['#5F7FFF','#4060EE'], // blue
-  ['#FF6348','#EE5535'], // orange
-  ['#C56CF0','#B44DE0'], // purple
+  ['#FF4757','#C0392B'], // red
+  ['#FFA502','#E67E22'], // orange/yellow
+  ['#2ED573','#27AE60'], // green
+  ['#1E90FF','#2980B9'], // blue
+  ['#A855F7','#8E44AD'], // purple
+  ['#FF6B81','#E74C3C'], // pink
+  ['#00D2D3','#00B4D8'], // cyan
+  ['#FECA57','#F39C12'], // gold
 ];
 
 // ---- State ----
+let W, H;
 let grid = [];
 let cellSize = 0;
 let gridX = 0, gridY = 0;
 let score = 0;
-let highScore = parseInt(localStorage.getItem('blockblast_hs') || '0');
+let highScore = parseInt(localStorage.getItem('bb_hs') || '0');
 let pieces = [];
 let dragging = null;
 let dragOffsetX = 0, dragOffsetY = 0;
@@ -54,70 +56,98 @@ let comboCount = 0;
 let gameOver = false;
 let gameOverAnim = 0;
 let shakeAmount = 0;
+let shakeX = 0, shakeY = 0;
 let lastTime = 0;
 let animFrame = 0;
 let bgStars = [];
+let gridPulse = 0;
+let comboTimer = 0;
+let lastComboCount = 0;
+let bgGradientAngle = 0;
+let ambientParticles = [];
+let initialized = false;
 
-// ---- Piece Definitions ----
+// ---- Piece Definitions (all Block Blast shapes) ----
 const PIECE_SHAPES = [
   [[1]], // single
   [[1,1]], // h2
   [[1],[1]], // v2
   [[1,1,1]], // h3
   [[1],[1],[1]], // v3
-  [[1,1],[1,1]], // square
-  [[1,1,1],[0,1,0]], // t
-  [[0,1,0],[1,1,1]], // t inv
-  [[1,0],[1,0],[1,1]], // l
-  [[0,1],[0,1],[1,1]], // l mirror
-  [[1,1,0],[0,1,1]], // z
-  [[0,1,1],[1,1,0]], // z mirror
-  [[1,1,1],[1,0,0]], // L
-  [[1,0,0],[1,1,1]], // L mirror
-  [[1,1],[1,0]], // small l
-  [[1,1],[0,1]], // small l mirror
+  [[1,1],[1,1]], // square 2x2
+  [[1,1,1],[0,1,0]], // T
+  [[0,1,0],[1,1,1]], // T inv
+  [[1,0],[1,0],[1,1]], // J
+  [[0,1],[0,1],[1,1]], // J mirror
+  [[1,1,0],[0,1,1]], // Z
+  [[0,1,1],[1,1,0]], // S
+  [[1,0,0],[1,1,1]], // L
+  [[0,0,1],[1,1,1]], // L mirror
+  [[1,1],[1,0]], // small L
+  [[1,1],[0,1]], // small L mirror
   [[1,1,1,1]], // h4
   [[1],[1],[1],[1]], // v4
+  [[1,1,1],[1,0,0]], // big L
+  [[1,0,0],[1,1,1]], // big L mirror
+  [[1,1,1],[0,0,1]], // big J
+  [[0,0,1],[1,1,1]], // big J mirror
+  [[1,1],[1,1],[1,1]], // 3x2
+  [[1,1,1],[1,1,1]], // 2x3
 ];
 
 // ---- Resize ----
 function resize() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  canvas.width = window.innerWidth * dpr;
-  canvas.height = window.innerHeight * dpr;
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   
-  const w = window.innerWidth;
-  const h = window.innerHeight;
+  const topPadding = 110;
+  const bottomPadding = 200;
+  const sidePadding = 16;
   
-  // Calculate grid size - leave room for pieces below and UI above
-  const topPadding = 100;
-  const bottomPadding = 180;
-  const sidePadding = 20;
-  
-  const availW = w - sidePadding * 2;
-  const availH = h - topPadding - bottomPadding;
+  const availW = W - sidePadding * 2;
+  const availH = H - topPadding - bottomPadding;
   cellSize = Math.floor(Math.min(availW / GRID, availH / GRID));
   
-  gridX = Math.floor((w - cellSize * GRID) / 2);
+  gridX = Math.floor((W - cellSize * GRID) / 2);
   gridY = topPadding + Math.floor((availH - cellSize * GRID) / 2);
   
   // Generate background stars
-  bgStars = [];
-  for (let i = 0; i < 80; i++) {
-    bgStars.push({
-      x: Math.random() * w,
-      y: Math.random() * h,
-      size: Math.random() * 2 + 0.5,
-      alpha: Math.random() * 0.5 + 0.3,
-      speed: Math.random() * 0.3 + 0.1,
-      twinkle: Math.random() * Math.PI * 2
-    });
+  if (!initialized) {
+    bgStars = [];
+    for (let i = 0; i < 100; i++) {
+      bgStars.push({
+        x: Math.random() * W,
+        y: Math.random() * H,
+        size: Math.random() * 2.5 + 0.5,
+        alpha: Math.random() * 0.6 + 0.2,
+        speed: Math.random() * 0.2 + 0.05,
+        twinkle: Math.random() * Math.PI * 2,
+        hue: Math.random() * 60 + 200 // blue-ish stars
+      });
+    }
+    // Ambient floating particles
+    for (let i = 0; i < 20; i++) {
+      ambientParticles.push({
+        x: Math.random() * W,
+        y: Math.random() * H,
+        size: Math.random() * 3 + 1,
+        vx: (Math.random() - 0.5) * 20,
+        vy: (Math.random() - 0.5) * 20,
+        alpha: Math.random() * 0.3 + 0.1,
+        hue: Math.random() * 60 + 200
+      });
+    }
+    initialized = true;
   }
 }
 
 // ---- Grid ----
 function initGrid() {
+  grid = [];
   for (let r = 0; r < GRID; r++) {
     grid[r] = [];
     for (let c = 0; c < GRID; c++) {
@@ -135,7 +165,7 @@ function createPiece() {
     colorIdx,
     placed: false,
     animScale: 0,
-    animDelay: Math.random() * 0.15
+    animDelay: Math.random() * 0.2
   };
 }
 
@@ -151,7 +181,7 @@ function canPlace(piece, row, col) {
         const gr = row + r;
         const gc = col + c;
         if (gr < 0 || gr >= GRID || gc < 0 || gc >= GRID) return false;
-        if (grid[gr][gc]) return false;
+        if (grid[gr][gc] !== null) return false;
       }
     }
   }
@@ -190,53 +220,63 @@ function checkLines() {
   
   for (let r = 0; r < GRID; r++) {
     let full = true;
-    for (let c = 0; c < GRID; c++) { if (!grid[r][c]) { full = false; break; } }
+    for (let c = 0; c < GRID; c++) { if (grid[r][c] === null) { full = false; break; } }
     if (full) rowsCleared.push(r);
   }
   
   for (let c = 0; c < GRID; c++) {
     let full = true;
-    for (let r = 0; r < GRID; r++) { if (!grid[r][c]) { full = false; break; } }
+    for (let r = 0; r < GRID; r++) { if (grid[r][c] === null) { full = false; break; } }
     if (full) colsCleared.push(c);
   }
   
   const totalCleared = rowsCleared.length + colsCleared.length;
   
   if (totalCleared > 0) {
-    // Animation for line clear
+    // Collect cells to clear (avoid duplicates)
+    let cellsToClear = new Set();
+    
     rowsCleared.forEach(r => {
       for (let c = 0; c < GRID; c++) {
-        lineClearAnim.push({ row: r, col: c, progress: 0, color: grid[r][c] });
-        spawnClearParticles(r, c, grid[r][c]);
-        grid[r][c] = null;
+        cellsToClear.add(`${r},${c}`);
+        lineClearAnim.push({ row: r, col: c, progress: 0, color: grid[r][c], delay: c * 0.02 });
       }
     });
     colsCleared.forEach(c => {
       for (let r = 0; r < GRID; r++) {
-        if (!lineClearAnim.find(a => a.row === r && a.col === c)) {
-          lineClearAnim.push({ row: r, col: c, progress: 0, color: grid[r][c] });
-          spawnClearParticles(r, c, grid[r][c]);
-          grid[r][c] = null;
+        const key = `${r},${c}`;
+        if (!cellsToClear.has(key)) {
+          cellsToClear.add(key);
+          lineClearAnim.push({ row: r, col: c, progress: 0, color: grid[r][c], delay: r * 0.02 });
         }
+        grid[r][c] = null;
+      }
+    });
+    rowsCleared.forEach(r => {
+      for (let c = 0; c < GRID; c++) {
+        grid[r][c] = null;
       }
     });
     
     // Score bonus
     let bonus = totalCleared * 10;
-    if (totalCleared >= 2) bonus *= 2; // combo multiplier
+    if (totalCleared >= 2) bonus *= 2;
     score += bonus;
     comboCount++;
     
+    // Big score popup
     scorePopups.push({
       x: gridX + cellSize * GRID / 2,
-      y: gridY + cellSize * GRID / 2,
+      y: gridY + cellSize * GRID / 2 - 20,
       text: `+${totalCleared * GRID + bonus}`,
       progress: 0,
-      color: totalCleared >= 2 ? '#FECA57' : '#48DBFB',
-      combo: totalCleared >= 2 ? `${totalCleared}x COMBO!` : null
+      color: totalCleared >= 2 ? '#FFA502' : '#2ED573',
+      combo: totalCleared >= 2 ? `${totalCleared}x COMBO!` : null,
+      scale: 1
     });
     
-    shakeAmount = 8;
+    shakeAmount = 12;
+    gridPulse = 1;
   } else {
     comboCount = 0;
   }
@@ -247,17 +287,18 @@ function spawnPlaceParticles(row, col, colorIdx) {
   const cx = gridX + col * cellSize + cellSize / 2;
   const cy = gridY + row * cellSize + cellSize / 2;
   const color = COLORS[colorIdx][0];
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 8; i++) {
     const angle = Math.random() * Math.PI * 2;
-    const speed = Math.random() * 120 + 60;
+    const speed = Math.random() * 150 + 80;
     particles.push({
       x: cx, y: cy,
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
       life: 1,
-      decay: Math.random() * 2 + 2,
-      size: Math.random() * 4 + 2,
-      color
+      decay: Math.random() * 2.5 + 2,
+      size: Math.random() * 5 + 2,
+      color,
+      type: 'spark'
     });
   }
 }
@@ -266,38 +307,33 @@ function spawnClearParticles(row, col, colorIdx) {
   const cx = gridX + col * cellSize + cellSize / 2;
   const cy = gridY + row * cellSize + cellSize / 2;
   const color = COLORS[colorIdx] ? COLORS[colorIdx][0] : '#ffffff';
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 15; i++) {
     const angle = Math.random() * Math.PI * 2;
-    const speed = Math.random() * 200 + 80;
+    const speed = Math.random() * 250 + 100;
     particles.push({
       x: cx, y: cy,
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
       life: 1,
       decay: Math.random() * 1.5 + 1.5,
-      size: Math.random() * 6 + 3,
+      size: Math.random() * 8 + 3,
       color,
-      gravity: 200
+      type: 'clear',
+      gravity: 300
     });
   }
-}
-
-function spawnPreviewParticles(row, col, colorIdx) {
-  const cx = gridX + col * cellSize + cellSize / 2;
-  const cy = gridY + row * cellSize + cellSize / 2;
-  const color = COLORS[colorIdx][0];
-  for (let i = 0; i < 3; i++) {
-    const angle = Math.random() * Math.PI * 2;
-    const speed = Math.random() * 40 + 20;
+  // Star burst
+  for (let i = 0; i < 6; i++) {
+    const angle = (i / 6) * Math.PI * 2;
     particles.push({
       x: cx, y: cy,
-      vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed - 30,
+      vx: Math.cos(angle) * 180,
+      vy: Math.sin(angle) * 180,
       life: 1,
-      decay: Math.random() * 2 + 2,
-      size: Math.random() * 3 + 1,
-      color,
-      alpha: 0.6
+      decay: 2,
+      size: 4,
+      color: '#ffffff',
+      type: 'star'
     });
   }
 }
@@ -322,22 +358,19 @@ function resetGame() {
   generatePieces();
 }
 
-// ---- Piece Positioning (for bottom bar) ----
+// ---- Piece Positioning ----
 function getPiecePosition(index) {
-  const w = window.innerWidth;
-  const h = window.innerHeight;
-  const bottomY = h - 130;
-  const spacing = 130;
+  const spacing = Math.min(140, (W - 40) / 3);
   const totalWidth = spacing * 2;
-  const startX = (w - totalWidth) / 2 + 65;
+  const startX = (W - totalWidth) / 2 + spacing / 2;
+  const bottomY = H - 120;
   return { x: startX + index * spacing, y: bottomY };
 }
 
 function getPieceBounds(pos, piece) {
   const cols = piece.shape[0].length;
   const rows = piece.shape.length;
-  // Size pieces to fit nicely in the bottom bar
-  const barCellSize = Math.min(cellSize * 0.7, 30);
+  const barCellSize = Math.min(cellSize * 0.65, Math.min(32, (W / 3 - 20) / Math.max(cols, rows)));
   return {
     x: pos.x - cols * barCellSize / 2,
     y: pos.y - rows * barCellSize / 2,
@@ -353,7 +386,6 @@ function getPieceAt(x, y) {
     const pos = getPiecePosition(i);
     const bounds = getPieceBounds(pos, pieces[i]);
     if (x >= bounds.x && x <= bounds.x + bounds.w && y >= bounds.y && y <= bounds.y + bounds.h) {
-      // Check if clicking on an actual cell of the piece
       const localX = x - bounds.x;
       const localY = y - bounds.y;
       const col = Math.floor(localX / bounds.cellSize);
@@ -402,7 +434,6 @@ function onPointerMove(e) {
   mouseY = pos.y;
   
   if (dragging) {
-    // Calculate ghost position
     const piece = pieces[dragging.index];
     const relX = mouseX - dragOffsetX;
     const relY = mouseY - dragOffsetY;
@@ -421,12 +452,10 @@ function onPointerUp(e) {
     if (ghostValid && canPlace(piece, ghostGridY, ghostGridX)) {
       placePiece(piece, ghostGridY, ghostGridX);
       
-      // Check if all pieces placed
       if (pieces.every(p => p.placed)) {
         generatePieces();
       }
       
-      // Check game over
       if (isGameOver()) {
         gameOver = true;
         gameOverAnim = 0;
@@ -446,72 +475,113 @@ canvas.addEventListener('touchmove', onPointerMove, { passive: false });
 canvas.addEventListener('touchend', onPointerUp, { passive: false });
 canvas.addEventListener('touchcancel', onPointerUp, { passive: false });
 
-// ---- Drawing ----
+// ---- Drawing Functions ----
+
 function drawBackground() {
-  // Dark gradient background
-  const w = window.innerWidth;
-  const h = window.innerHeight;
-  const grad = ctx.createLinearGradient(0, 0, 0, h);
-  grad.addColorStop(0, '#0a0a1a');
-  grad.addColorStop(0.5, '#0d1025');
-  grad.addColorStop(1, '#0a0a1a');
+  bgGradientAngle += 0.0003;
+  
+  // Animated gradient background
+  const grad = ctx.createRadialGradient(
+    W / 2 + Math.sin(bgGradientAngle) * 100,
+    H / 2 + Math.cos(bgGradientAngle) * 50,
+    0,
+    W / 2, H / 2, Math.max(W, H)
+  );
+  grad.addColorStop(0, '#1e2a4a');
+  grad.addColorStop(0.5, '#151530');
+  grad.addColorStop(1, '#0d0d1a');
   ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, w, h);
+  ctx.fillRect(0, 0, W, H);
   
   // Stars
   const time = Date.now() * 0.001;
   bgStars.forEach(star => {
-    const twinkle = Math.sin(time * star.speed * 3 + star.twinkle) * 0.3 + 0.7;
+    const twinkle = Math.sin(time * star.speed * 4 + star.twinkle) * 0.4 + 0.6;
     ctx.globalAlpha = star.alpha * twinkle;
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = `hsl(${star.hue}, 80%, 85%)`;
     ctx.beginPath();
     ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+  
+  // Ambient particles
+  ambientParticles.forEach(p => {
+    p.x += p.vx * 0.016;
+    p.y += p.vy * 0.016;
+    if (p.x < 0) p.x = W;
+    if (p.x > W) p.x = 0;
+    if (p.y < 0) p.y = H;
+    if (p.y > H) p.y = 0;
+    
+    ctx.globalAlpha = p.alpha;
+    ctx.fillStyle = `hsl(${p.hue}, 70%, 70%)`;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
     ctx.fill();
   });
   ctx.globalAlpha = 1;
 }
 
 function drawGrid() {
-  const w = window.innerWidth;
+  const time = Date.now() * 0.001;
   
-  // Grid background with subtle glow
-  ctx.shadowColor = '#5F7FFF';
-  ctx.shadowBlur = 20;
-  ctx.fillStyle = 'rgba(20, 20, 50, 0.8)';
+  // Grid glow effect
+  if (gridPulse > 0) {
+    ctx.shadowColor = '#ffffff';
+    ctx.shadowBlur = 30 * gridPulse;
+  }
+  
+  // Grid background
+  const gridGrad = ctx.createLinearGradient(gridX, gridY, gridX + cellSize * GRID, gridY + cellSize * GRID);
+  gridGrad.addColorStop(0, 'rgba(15, 15, 40, 0.9)');
+  gridGrad.addColorStop(1, 'rgba(25, 25, 55, 0.9)');
+  ctx.fillStyle = gridGrad;
   ctx.beginPath();
-  ctx.roundRect(gridX - 4, gridY - 4, cellSize * GRID + 8, cellSize * GRID + 8, 12);
+  ctx.roundRect(gridX - 6, gridY - 6, cellSize * GRID + 12, cellSize * GRID + 12, 14);
   ctx.fill();
   ctx.shadowBlur = 0;
   
-  // Grid lines
-  for (let r = 0; r <= GRID; r++) {
-    ctx.strokeStyle = 'rgba(95, 127, 255, 0.15)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(gridX, gridY + r * cellSize);
-    ctx.lineTo(gridX + cellSize * GRID, gridY + r * cellSize);
-    ctx.stroke();
-  }
-  for (let c = 0; c <= GRID; c++) {
-    ctx.strokeStyle = 'rgba(95, 127, 255, 0.15)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(gridX + c * cellSize, gridY);
-    ctx.lineTo(gridX + c * cellSize, gridY + cellSize * GRID);
-    ctx.stroke();
+  // Grid border glow
+  ctx.strokeStyle = 'rgba(30, 144, 255, 0.3)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.roundRect(gridX - 6, gridY - 6, cellSize * GRID + 12, cellSize * GRID + 12, 14);
+  ctx.stroke();
+  
+  // Grid cells
+  for (let r = 0; r < GRID; r++) {
+    for (let c = 0; c < GRID; c++) {
+      const x = gridX + c * cellSize;
+      const y = gridY + r * cellSize;
+      const inset = 2;
+      
+      // Empty cell
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.03)';
+      ctx.beginPath();
+      ctx.roundRect(x + inset, y + inset, cellSize - inset * 2, cellSize - inset * 2, 5);
+      ctx.fill();
+      
+      // Subtle grid lines
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.roundRect(x + inset, y + inset, cellSize - inset * 2, cellSize - inset * 2, 5);
+      ctx.stroke();
+    }
   }
   
-  // Placed blocks
+  // Placed blocks with 3D effect
   for (let r = 0; r < GRID; r++) {
     for (let c = 0; c < GRID; c++) {
       if (grid[r][c] !== null) {
-        drawBlock(r, c, grid[r][c], 1);
+        draw3DBlock(r, c, grid[r][c], 1);
       }
     }
   }
   
   // Ghost preview
-  if (dragging && ghostValid !== undefined) {
+  if (dragging) {
     const piece = pieces[dragging.index];
     for (let r = 0; r < piece.shape.length; r++) {
       for (let c = 0; c < piece.shape[r].length; c++) {
@@ -519,7 +589,7 @@ function drawGrid() {
           const gr = ghostGridY + r;
           const gc = ghostGridX + c;
           if (gr >= 0 && gr < GRID && gc >= 0 && gc < GRID) {
-            drawBlock(gr, gc, piece.colorIdx, ghostValid ? 0.5 : 0.2, true);
+            draw3DBlock(gr, gc, piece.colorIdx, ghostValid ? 0.45 : 0.15, true, ghostValid);
           }
         }
       }
@@ -527,44 +597,73 @@ function drawGrid() {
   }
 }
 
-function drawBlock(row, col, colorIdx, alpha = 1, isGhost = false) {
+function draw3DBlock(row, col, colorIdx, alpha = 1, isGhost = false, isValid = true) {
   const x = gridX + col * cellSize;
   const y = gridY + row * cellSize;
-  const s = cellSize - 3;
-  const inset = 1.5;
+  const s = cellSize - 4;
+  const inset = 2;
   const colors = COLORS[colorIdx];
   
   ctx.globalAlpha = alpha;
   
-  // Main block with gradient
+  // Shadow (3D depth)
+  if (!isGhost) {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+    ctx.beginPath();
+    ctx.roundRect(x + inset + 3, y + inset + 3, s, s, 6);
+    ctx.fill();
+  }
+  
+  // Main block body with gradient
   const grad = ctx.createLinearGradient(x + inset, y + inset, x + inset + s, y + inset + s);
-  grad.addColorStop(0, colors[0]);
-  grad.addColorStop(1, colors[1]);
+  grad.addColorStop(0, isValid ? colors[0] : '#666666');
+  grad.addColorStop(1, isValid ? colors[1] : '#444444');
   
   ctx.fillStyle = grad;
   ctx.beginPath();
   ctx.roundRect(x + inset, y + inset, s, s, 6);
   ctx.fill();
   
-  // Top highlight (3D effect)
+  // Top face highlight (3D raised effect)
   if (!isGhost) {
-    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    const topGrad = ctx.createLinearGradient(x + inset, y + inset, x + inset, y + inset + s * 0.4);
+    topGrad.addColorStop(0, 'rgba(255, 255, 255, 0.35)');
+    topGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = topGrad;
     ctx.beginPath();
-    ctx.roundRect(x + inset + 2, y + inset + 2, s - 4, s * 0.35, [6, 6, 0, 0]);
+    ctx.roundRect(x + inset + 2, y + inset + 2, s - 4, s * 0.4, [6, 6, 0, 0]);
     ctx.fill();
     
-    // Inner shadow at bottom
-    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+    // Left edge highlight
+    const leftGrad = ctx.createLinearGradient(x + inset, y + inset, x + inset + s * 0.3, y + inset);
+    leftGrad.addColorStop(0, 'rgba(255, 255, 255, 0.15)');
+    leftGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = leftGrad;
     ctx.beginPath();
-    ctx.roundRect(x + inset + 2, y + inset + s * 0.65, s - 4, s * 0.3, [0, 0, 6, 6]);
+    ctx.roundRect(x + inset + 2, y + inset + 2, s * 0.25, s - 4, [6, 0, 0, 6]);
     ctx.fill();
     
-    // Subtle border
-    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+    // Bottom edge shadow (3D)
+    const bottomGrad = ctx.createLinearGradient(x + inset, y + inset + s * 0.7, x + inset, y + inset + s);
+    bottomGrad.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    bottomGrad.addColorStop(1, 'rgba(0, 0, 0, 0.25)');
+    ctx.fillStyle = bottomGrad;
+    ctx.beginPath();
+    ctx.roundRect(x + inset + 2, y + inset + s * 0.7, s - 4, s * 0.28, [0, 0, 6, 6]);
+    ctx.fill();
+    
+    // Inner border highlight
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.roundRect(x + inset, y + inset, s, s, 6);
+    ctx.roundRect(x + inset + 0.5, y + inset + 0.5, s - 1, s - 1, 5);
     ctx.stroke();
+    
+    // Specular highlight (top-left corner)
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+    ctx.beginPath();
+    ctx.ellipse(x + inset + s * 0.25, y + inset + s * 0.22, s * 0.15, s * 0.1, -0.5, 0, Math.PI * 2);
+    ctx.fill();
   }
   
   ctx.globalAlpha = 1;
@@ -580,17 +679,18 @@ function drawPieces() {
     const pos = getPiecePosition(i);
     const bounds = getPieceBounds(pos, piece);
     
-    // Entrance animation
-    const scale = Math.min(1, piece.animScale);
-    const bounce = 1 + Math.sin(time * 3 + i * 0.8) * 0.03;
-    const finalScale = scale * bounce;
+    // Entrance animation with bounce
+    const t = Math.min(1, piece.animScale);
+    const ease = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    const scale = ease;
+    const hover = Math.sin(time * 2.5 + i * 1.2) * 4;
     
     ctx.save();
-    ctx.translate(pos.x, pos.y);
-    ctx.scale(finalScale, finalScale);
-    ctx.translate(-pos.x, -pos.y);
+    ctx.translate(pos.x, pos.y + hover);
+    ctx.scale(scale, scale);
+    ctx.translate(-pos.x, -pos.y - hover);
     
-    // Draw piece blocks
+    // Draw piece blocks with 3D effect
     for (let r = 0; r < piece.shape.length; r++) {
       for (let c = 0; c < piece.shape[r].length; c++) {
         if (piece.shape[r][c]) {
@@ -598,6 +698,13 @@ function drawPieces() {
           const by = bounds.y + r * bounds.cellSize;
           const s = bounds.cellSize - 2;
           
+          // Shadow
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+          ctx.beginPath();
+          ctx.roundRect(bx + 2, by + 2, s, s, 4);
+          ctx.fill();
+          
+          // Main block
           const colors = COLORS[piece.colorIdx];
           const grad = ctx.createLinearGradient(bx, by, bx + s, by + s);
           grad.addColorStop(0, colors[0]);
@@ -609,13 +716,13 @@ function drawPieces() {
           ctx.fill();
           
           // Highlight
-          ctx.fillStyle = 'rgba(255,255,255,0.2)';
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
           ctx.beginPath();
           ctx.roundRect(bx + 2, by + 2, s - 4, s * 0.35, [4, 4, 0, 0]);
           ctx.fill();
           
           // Border
-          ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
           ctx.lineWidth = 0.5;
           ctx.beginPath();
           ctx.roundRect(bx + 1, by + 1, s, s, 4);
@@ -631,28 +738,37 @@ function drawPieces() {
 function drawDraggedPiece() {
   if (!dragging) return;
   const piece = pieces[dragging.index];
-  const bounds = getPieceBounds({ x: mouseX - dragOffsetX, y: mouseY - dragOffsetY }, piece);
   
   ctx.save();
-  ctx.globalAlpha = 0.85;
-  ctx.scale(1.1, 1.1);
-  ctx.translate(-mouseX * 0.1 + dragOffsetX * 0.1, -mouseY * 0.1 + dragOffsetY * 0.1);
+  ctx.globalAlpha = 0.9;
+  ctx.scale(1.15, 1.15);
+  
+  const cx = (mouseX - dragOffsetX) * 0.87;
+  const cy = (mouseY - dragOffsetY) * 0.87;
   
   for (let r = 0; r < piece.shape.length; r++) {
     for (let c = 0; c < piece.shape[r].length; c++) {
       if (piece.shape[r][c]) {
-        const bx = mouseX - dragOffsetX + c * cellSize;
-        const by = mouseY - dragOffsetY + r * cellSize;
+        const bx = cx + c * cellSize;
+        const by = cy + r * cellSize;
         const s = cellSize - 3;
         
         const colors = COLORS[piece.colorIdx];
+        
+        // Glow
+        ctx.shadowColor = colors[0];
+        ctx.shadowBlur = 20;
+        
+        // Shadow
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+        ctx.beginPath();
+        ctx.roundRect(bx + 3, by + 3, s, s, 6);
+        ctx.fill();
+        
+        // Main block
         const grad = ctx.createLinearGradient(bx, by, bx + s, by + s);
         grad.addColorStop(0, colors[0]);
         grad.addColorStop(1, colors[1]);
-        
-        // Shadow
-        ctx.shadowColor = colors[0];
-        ctx.shadowBlur = 15;
         
         ctx.fillStyle = grad;
         ctx.beginPath();
@@ -662,9 +778,15 @@ function drawDraggedPiece() {
         ctx.shadowBlur = 0;
         
         // Highlight
-        ctx.fillStyle = 'rgba(255,255,255,0.3)';
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
         ctx.beginPath();
         ctx.roundRect(bx + 3, by + 3, s - 6, s * 0.35, [6, 6, 0, 0]);
+        ctx.fill();
+        
+        // Specular
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+        ctx.beginPath();
+        ctx.ellipse(bx + s * 0.25, by + s * 0.22, s * 0.12, s * 0.08, -0.5, 0, Math.PI * 2);
         ctx.fill();
       }
     }
@@ -678,52 +800,94 @@ function drawParticles(dt) {
     p.x += p.vx * dt;
     p.y += p.vy * dt;
     if (p.gravity) p.vy += p.gravity * dt;
+    p.vx *= 0.98;
+    p.vy *= 0.98;
     p.life -= p.decay * dt;
     
     if (p.life > 0) {
-      ctx.globalAlpha = p.life * (p.alpha || 1);
-      ctx.fillStyle = p.color;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
-      ctx.fill();
+      const alpha = p.life;
+      ctx.globalAlpha = alpha;
       
-      // Glow
-      ctx.shadowColor = p.color;
-      ctx.shadowBlur = 8;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.size * p.life * 0.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.shadowBlur = 0;
+      if (p.type === 'star') {
+        // Star shape
+        ctx.fillStyle = p.color;
+        ctx.shadowColor = p.color;
+        ctx.shadowBlur = 10;
+        drawStar(p.x, p.y, p.size * p.life, 5);
+        ctx.shadowBlur = 0;
+      } else {
+        // Glowing circle
+        ctx.fillStyle = p.color;
+        ctx.shadowColor = p.color;
+        ctx.shadowBlur = 8;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        
+        // Inner bright core
+        ctx.fillStyle = '#ffffff';
+        ctx.globalAlpha = alpha * 0.5;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size * p.life * 0.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
   });
   ctx.globalAlpha = 1;
   particles = particles.filter(p => p.life > 0);
 }
 
+function drawStar(x, y, r, points) {
+  ctx.beginPath();
+  for (let i = 0; i < points * 2; i++) {
+    const angle = (i / (points * 2)) * Math.PI * 2 - Math.PI / 2;
+    const radius = i % 2 === 0 ? r : r * 0.4;
+    const px = x + Math.cos(angle) * radius;
+    const py = y + Math.sin(angle) * radius;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+
 function drawLineClearAnim(dt) {
   lineClearAnim.forEach(a => {
-    a.progress += dt * 4;
+    a.progress += dt * 3.5;
     if (a.progress < 1) {
       const x = gridX + a.col * cellSize + cellSize / 2;
       const y = gridY + a.row * cellSize + cellSize / 2;
-      const scale = 1 + a.progress * 0.5;
-      const alpha = 1 - a.progress;
+      const scale = 1 + a.progress * 0.8;
+      const alpha = (1 - a.progress) * 0.8;
       
+      // Flash
       ctx.globalAlpha = alpha;
       ctx.fillStyle = '#ffffff';
       ctx.shadowColor = COLORS[a.color] ? COLORS[a.color][0] : '#ffffff';
-      ctx.shadowBlur = 20;
+      ctx.shadowBlur = 25;
       ctx.beginPath();
-      ctx.arc(x, y, cellSize * 0.4 * scale, 0, Math.PI * 2);
+      ctx.arc(x, y, cellSize * 0.35 * scale, 0, Math.PI * 2);
       ctx.fill();
       ctx.shadowBlur = 0;
       
       // Expanding ring
       ctx.strokeStyle = COLORS[a.color] ? COLORS[a.color][0] : '#ffffff';
-      ctx.lineWidth = 2 * (1 - a.progress);
+      ctx.lineWidth = 3 * (1 - a.progress);
+      ctx.globalAlpha = alpha * 0.6;
       ctx.beginPath();
-      ctx.arc(x, y, cellSize * 0.6 * a.progress, 0, Math.PI * 2);
+      ctx.arc(x, y, cellSize * 0.7 * a.progress, 0, Math.PI * 2);
       ctx.stroke();
+      
+      // Shrinking block
+      if (a.progress < 0.5) {
+        const blockScale = 1 - a.progress * 2;
+        ctx.globalAlpha = (1 - a.progress * 2) * 0.5;
+        ctx.fillStyle = COLORS[a.color] ? COLORS[a.color][0] : '#ffffff';
+        ctx.beginPath();
+        ctx.roundRect(x - cellSize * 0.3 * blockScale, y - cellSize * 0.3 * blockScale, cellSize * 0.6 * blockScale, cellSize * 0.6 * blockScale, 4);
+        ctx.fill();
+      }
     }
     ctx.globalAlpha = 1;
   });
@@ -732,11 +896,11 @@ function drawLineClearAnim(dt) {
 
 function drawScorePopups(dt) {
   scorePopups.forEach(p => {
-    p.progress += dt * 1.5;
+    p.progress += dt * 1.2;
     if (p.progress < 1) {
       const alpha = 1 - p.progress;
-      const y = p.y - p.progress * 60;
-      const scale = 1 + p.progress * 0.3;
+      const y = p.y - p.progress * 80;
+      const scale = 1 + p.progress * 0.5;
       
       ctx.save();
       ctx.translate(p.x, y);
@@ -744,19 +908,25 @@ function drawScorePopups(dt) {
       ctx.globalAlpha = alpha;
       
       // Combo text
-      if (p.combo && p.progress < 0.5) {
-        ctx.fillStyle = '#FECA57';
-        ctx.font = 'bold 18px "Segoe UI", system-ui, sans-serif';
+      if (p.combo && p.progress < 0.6) {
+        const comboAlpha = 1 - p.progress / 0.6;
+        ctx.globalAlpha = comboAlpha;
+        ctx.fillStyle = '#FFA502';
+        ctx.font = 'bold 20px system-ui, sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText(p.combo, 0, -25);
+        ctx.shadowColor = '#FFA502';
+        ctx.shadowBlur = 15;
+        ctx.fillText(p.combo, 0, -30);
+        ctx.shadowBlur = 0;
       }
       
       // Score text
+      ctx.globalAlpha = alpha;
       ctx.fillStyle = p.color;
-      ctx.font = 'bold 24px "Segoe UI", system-ui, sans-serif';
+      ctx.font = 'bold 28px system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.shadowColor = p.color;
-      ctx.shadowBlur = 10;
+      ctx.shadowBlur = 12;
       ctx.fillText(p.text, 0, 0);
       ctx.shadowBlur = 0;
       
@@ -768,120 +938,151 @@ function drawScorePopups(dt) {
 }
 
 function drawUI() {
-  const w = window.innerWidth;
   const time = Date.now() * 0.001;
   
-  // Score display
-  ctx.fillStyle = 'rgba(20, 20, 50, 0.6)';
+  // Score panel
+  const panelW = 180;
+  const panelH = 70;
+  const panelX = W / 2 - panelW / 2;
+  const panelY = 25;
+  
+  // Panel background
+  ctx.fillStyle = 'rgba(15, 15, 40, 0.7)';
   ctx.beginPath();
-  ctx.roundRect(w / 2 - 80, 20, 160, 60, 16);
+  ctx.roundRect(panelX, panelY, panelW, panelH, 18);
   ctx.fill();
   
-  ctx.fillStyle = 'rgba(95, 127, 255, 0.3)';
+  // Panel border
+  ctx.strokeStyle = 'rgba(30, 144, 255, 0.3)';
+  ctx.lineWidth = 1.5;
   ctx.beginPath();
-  ctx.roundRect(w / 2 - 80, 20, 160, 60, 16);
+  ctx.roundRect(panelX, panelY, panelW, panelH, 18);
   ctx.stroke();
   
-  // Score number
+  // Score number with subtle pulse
+  const scorePulse = 1 + Math.sin(time * 3) * 0.02;
+  ctx.save();
+  ctx.translate(W / 2, panelY + 32);
+  ctx.scale(scorePulse, scorePulse);
   ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 32px "Segoe UI", system-ui, sans-serif';
+  ctx.font = 'bold 36px system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  const scoreScale = 1 + Math.sin(time * 2) * 0.02;
-  ctx.save();
-  ctx.translate(w / 2, 42);
-  ctx.scale(scoreScale, scoreScale);
+  ctx.shadowColor = '#1E90FF';
+  ctx.shadowBlur = 10;
   ctx.fillText(score.toString(), 0, 0);
+  ctx.shadowBlur = 0;
   ctx.restore();
   
   // "SCORE" label
-  ctx.fillStyle = 'rgba(255,255,255,0.5)';
-  ctx.font = '10px "Segoe UI", system-ui, sans-serif';
-  ctx.fillText('SCORE', w / 2, 70);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+  ctx.font = 'bold 11px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('SCORE', W / 2, panelY + 58);
   
   // High score
-  ctx.fillStyle = 'rgba(254, 202, 87, 0.7)';
-  ctx.font = '11px "Segoe UI", system-ui, sans-serif';
-  ctx.fillText(`BEST: ${highScore}`, w / 2, 90);
+  ctx.fillStyle = 'rgba(255, 165, 2, 0.8)';
+  ctx.font = '11px system-ui, sans-serif';
+  ctx.fillText(`★ ${highScore}`, W / 2, panelY + panelH + 18);
+  
+  // Combo indicator
+  if (comboCount > 1) {
+    ctx.fillStyle = '#FFA502';
+    ctx.font = 'bold 14px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.shadowColor = '#FFA502';
+    ctx.shadowBlur = 10;
+    ctx.fillText(`🔥 ${comboCount}x Combo!`, W / 2, panelY + panelH + 40);
+    ctx.shadowBlur = 0;
+  }
 }
 
 function drawGameOver() {
   if (!gameOver) return;
   
-  gameOverAnim = Math.min(1, gameOverAnim + 0.03);
-  const w = window.innerWidth;
-  const h = window.innerHeight;
+  gameOverAnim = Math.min(1, gameOverAnim + 0.025);
   
   // Overlay
-  ctx.fillStyle = `rgba(0, 0, 0, ${gameOverAnim * 0.7})`;
-  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = `rgba(0, 0, 0, ${gameOverAnim * 0.75})`;
+  ctx.fillRect(0, 0, W, H);
   
   // Game Over card
-  const cardW = Math.min(300, w - 40);
-  const cardH = 220;
-  const cardX = (w - cardW) / 2;
-  const cardY = (h - cardH) / 2;
-  const slideIn = Math.min(1, gameOverAnim * 2);
-  const offsetY = (1 - slideIn) * 50;
+  const cardW = Math.min(320, W - 50);
+  const cardH = 260;
+  const cardX = (W - cardW) / 2;
+  const cardY = (H - cardH) / 2;
+  const slideIn = Math.min(1, gameOverAnim * 2.5);
+  const bounce = slideIn < 0.5 ? 4 * slideIn * slideIn * slideIn : 1 - Math.pow(-2 * slideIn + 2, 3) / 2;
+  const offsetY = (1 - bounce) * 80;
   
   ctx.save();
   ctx.translate(0, offsetY);
   
+  // Card shadow
+  ctx.shadowColor = '#FF4757';
+  ctx.shadowBlur = 40;
+  
   // Card background
   ctx.fillStyle = 'rgba(20, 20, 50, 0.95)';
-  ctx.shadowColor = '#FF6B6B';
-  ctx.shadowBlur = 30;
   ctx.beginPath();
-  ctx.roundRect(cardX, cardY, cardW, cardH, 20);
+  ctx.roundRect(cardX, cardY, cardW, cardH, 24);
   ctx.fill();
   ctx.shadowBlur = 0;
   
-  // Border
-  ctx.strokeStyle = 'rgba(255, 107, 107, 0.5)';
+  // Card border
+  ctx.strokeStyle = 'rgba(255, 71, 87, 0.5)';
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.roundRect(cardX, cardY, cardW, cardH, 20);
+  ctx.roundRect(cardX, cardY, cardW, cardH, 24);
   ctx.stroke();
   
   // Title
-  ctx.fillStyle = '#FF6B6B';
-  ctx.font = 'bold 28px "Segoe UI", system-ui, sans-serif';
+  ctx.fillStyle = '#FF4757';
+  ctx.font = 'bold 32px system-ui, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('Game Over', w / 2, cardY + 50);
+  ctx.fillText('Game Over!', W / 2, cardY + 55);
   
   // Score
   ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 42px "Segoe UI", system-ui, sans-serif';
-  ctx.fillText(score.toString(), w / 2, cardY + 110);
+  ctx.font = 'bold 52px system-ui, sans-serif';
+  ctx.fillText(score.toString(), W / 2, cardY + 125);
   
-  ctx.fillStyle = 'rgba(255,255,255,0.5)';
-  ctx.font = '12px "Segoe UI", system-ui, sans-serif';
-  ctx.fillText('POINTS', w / 2, cardY + 130);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+  ctx.font = '13px system-ui, sans-serif';
+  ctx.fillText('POINTS', W / 2, cardY + 145);
   
   // New high score
-  if (score >= highScore && score > 0) {
+  if (score > 0 && score >= highScore) {
     ctx.fillStyle = '#FECA57';
-    ctx.font = 'bold 14px "Segoe UI", system-ui, sans-serif';
-    ctx.fillText('🏆 NEW HIGH SCORE!', w / 2, cardY + 155);
+    ctx.font = 'bold 15px system-ui, sans-serif';
+    ctx.shadowColor = '#FECA57';
+    ctx.shadowBlur = 10;
+    ctx.fillText('🏆 NEW HIGH SCORE!', W / 2, cardY + 172);
+    ctx.shadowBlur = 0;
   }
   
   // Restart button
-  const btnW = 160;
-  const btnH = 44;
-  const btnX = (w - btnW) / 2;
-  const btnY = cardY + cardH - 60;
+  const btnW = 180;
+  const btnH = 50;
+  const btnX = (W - btnW) / 2;
+  const btnY = cardY + cardH - 70;
   
+  // Button glow
   const btnGrad = ctx.createLinearGradient(btnX, btnY, btnX, btnY + btnH);
-  btnGrad.addColorStop(0, '#5F7FFF');
-  btnGrad.addColorStop(1, '#4060EE');
+  btnGrad.addColorStop(0, '#1E90FF');
+  btnGrad.addColorStop(1, '#2980B9');
   ctx.fillStyle = btnGrad;
+  ctx.shadowColor = '#1E90FF';
+  ctx.shadowBlur = 15;
   ctx.beginPath();
-  ctx.roundRect(btnX, btnY, btnW, btnH, 22);
+  ctx.roundRect(btnX, btnY, btnW, btnH, 25);
   ctx.fill();
+  ctx.shadowBlur = 0;
   
+  // Button text
   ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 16px "Segoe UI", system-ui, sans-serif';
-  ctx.fillText('Play Again', w / 2, btnY + btnH / 2 + 1);
+  ctx.font = 'bold 17px system-ui, sans-serif';
+  ctx.fillText('Play Again', W / 2, btnY + btnH / 2 + 1);
   
   ctx.restore();
 }
@@ -891,20 +1092,31 @@ function update(dt) {
   // Update piece animations
   pieces.forEach(p => {
     if (!p.placed && p.animScale < 1) {
-      p.animScale = Math.min(1, p.animScale + dt * 3);
+      p.animScale = Math.min(1, p.animScale + dt * 4);
     }
   });
   
   // Update shake
   if (shakeAmount > 0) {
-    shakeAmount *= 0.9;
-    if (shakeAmount < 0.5) shakeAmount = 0;
+    shakeX = (Math.random() - 0.5) * shakeAmount * 2;
+    shakeY = (Math.random() - 0.5) * shakeAmount * 2;
+    shakeAmount *= 0.88;
+    if (shakeAmount < 0.3) shakeAmount = 0;
+  } else {
+    shakeX = 0;
+    shakeY = 0;
+  }
+  
+  // Update grid pulse
+  if (gridPulse > 0) {
+    gridPulse *= 0.92;
+    if (gridPulse < 0.01) gridPulse = 0;
   }
   
   // Update high score
   if (score > highScore) {
     highScore = score;
-    localStorage.setItem('blockblast_hs', highScore.toString());
+    localStorage.setItem('bb_hs', highScore.toString());
   }
 }
 
@@ -918,12 +1130,7 @@ function gameLoop(timestamp) {
   
   // Apply shake
   ctx.save();
-  if (shakeAmount > 0) {
-    ctx.translate(
-      (Math.random() - 0.5) * shakeAmount,
-      (Math.random() - 0.5) * shakeAmount
-    );
-  }
+  ctx.translate(shakeX, shakeY);
   
   drawBackground();
   drawGrid();
@@ -950,9 +1157,9 @@ function init() {
 }
 
 window.addEventListener('resize', resize);
-window.addEventListener('orientationchange', () => setTimeout(resize, 100));
+window.addEventListener('orientationchange', () => setTimeout(resize, 150));
 
-// Prevent scrolling on mobile
+// Prevent scrolling
 document.body.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
 
 init();
